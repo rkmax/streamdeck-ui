@@ -23,6 +23,12 @@ def set_plugin(api, deck_id, page, key, plugin):
 
 class BasePlugin(ABC):
 
+    def __init__(self, **kwargs):
+        self.api = kwargs.get("api", None)
+        self.page = kwargs.get("page", None)
+        self.deck_id = kwargs.get("deck_id", None)
+        self.key = kwargs.get("key", None)
+
     @abstractmethod
     def stop(self):
         pass
