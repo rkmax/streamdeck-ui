@@ -19,6 +19,7 @@ from streamdeck_ui.display.filter import Filter
 from streamdeck_ui.display.image_filter import ImageFilter
 from streamdeck_ui.display.pulse_filter import PulseFilter
 from streamdeck_ui.display.text_filter import TextFilter
+from streamdeck_ui.plugins.plugins import get_plugin, call_plugin_func, set_plugin, BasePlugin
 from streamdeck_ui.stream_deck_monitor import StreamDeckMonitor
 
 
@@ -46,7 +47,7 @@ class StreamDeckServer:
         self.deck_ids: Dict[str, str] = {}
         "Lookup with device.id -> serial number"
 
-        self.plugins: Dict[str, Any] = {}
+        self.plugins: Dict[str, Dict[int, Dict[int, BasePlugin]]] = {}
 
         self.state: Dict[str, Dict[str, Union[int, str, Dict[int, Dict[int, Dict[str, str]]]]]] = {}
         "The data structure holding configuration for all Stream Decks"
@@ -154,11 +155,13 @@ class StreamDeckServer:
             config = json.loads(state_file.read())
             file_version = config.get("streamdeck_ui_version", 0)
             if file_version != CONFIG_FILE_VERSION:
-                raise ValueError("Incompatible version of config file found: " f"{file_version} does not match required version " f"{CONFIG_FILE_VERSION}.")
+                raise ValueError(
+                    "Incompatible version of config file found: " f"{file_version} does not match required version " f"{CONFIG_FILE_VERSION}.")
 
             self.state = {}
             for deck_id, deck in config["state"].items():
-                deck["buttons"] = {int(page_id): {int(button_id): button for button_id, button in buttons.items()} for page_id, buttons in deck.get("buttons", {}).items()}
+                deck["buttons"] = {int(page_id): {int(button_id): button for button_id, button in buttons.items()} for
+                                   page_id, buttons in deck.get("buttons", {}).items()}
                 self.state[deck_id] = deck
 
     def import_config(self, config_file: str) -> None:
@@ -170,7 +173,9 @@ class StreamDeckServer:
     def export_config(self, output_file: str) -> None:
         try:
             with open(output_file + ".tmp", "w") as state_file:
-                state_file.write(json.dumps({"streamdeck_ui_version": CONFIG_FILE_VERSION, "state": self.state}, indent=4, separators=(",", ": ")))
+                state_file.write(
+                    json.dumps({"streamdeck_ui_version": CONFIG_FILE_VERSION, "state": self.state}, indent=4,
+                               separators=(",", ": ")))
         except Exception as error:
             print(f"The configuration file '{output_file}' was not updated. Error: {error}")
             raise
@@ -237,6 +242,12 @@ class StreamDeckServer:
         except TransportError:
             pass
 
+        # loop all plugins and call stop
+        for page in self.plugins[serial_number]:
+            for button in self.plugins[serial_number][page]:
+                if self.plugins[serial_number][page][button] is not None:
+                    self.plugins[serial_number][page][button].stop()
+
         del self.decks[serial_number]
         del self.deck_ids[id]
 
@@ -269,7 +280,8 @@ class StreamDeckServer:
     def swap_buttons(self, deck_id: str, page: int, source_button: int, target_button: int) -> None:
         """Swaps the properties of the source and target buttons"""
         temp = cast(dict, self.state[deck_id]["buttons"])[page][source_button]
-        cast(dict, self.state[deck_id]["buttons"])[page][source_button] = cast(dict, self.state[deck_id]["buttons"])[page][target_button]
+        cast(dict, self.state[deck_id]["buttons"])[page][source_button] = \
+        cast(dict, self.state[deck_id]["buttons"])[page][target_button]
         cast(dict, self.state[deck_id]["buttons"])[page][target_button] = temp
         self._save_state()
 
@@ -537,12 +549,18 @@ class StreamDeckServer:
             # the type hinting is defined causes it to believe there *may* not be a list
             pages = len(deck_state["buttons"])  # type: ignore
 
-            display_handler = self.display_handlers.get(serial_number, DisplayGrid(self.lock, deck, pages, self.cpu_usage_callback))
+            display_handler = self.display_handlers.get(serial_number,
+                                                        DisplayGrid(self.lock, deck, pages, self.cpu_usage_callback))
             display_handler.set_page(self.get_page(deck_id))
             self.display_handlers[serial_number] = display_handler
 
             for page, buttons in deck_state.get("buttons", {}).items():  # type: ignore
                 for button in buttons:
+                    if serial_number not in self.plugins:
+                        self.plugins[serial_number] = {}
+                    if page not in self.plugins[serial_number]:
+                        self.plugins[serial_number][page] = {}
+                    self.plugins[serial_number][page][button] = None
                     self.update_button_filters(serial_number, page, button)
 
             display_handler.start()
@@ -551,16 +569,12 @@ class StreamDeckServer:
         display_handler = self.display_handlers[serial_number]
         filters: List[Filter] = []
 
-        plugin = button_settings.get("plugin")
-        if plugin:
-            plugin_name = f'{serial_number}-{page}-{button}'
-            if plugin_name not in self.plugins:
-                try:
-                    result = runpy.run_path(plugin)
-                    if 'init_state' in result and callable(result['init_state']):
-                        self.plugins[plugin_name] = result['init_state'](deck_id=serial_number, page=page, key=button, api=self)
-                except Exception as e:
-                    print(f'Error loading plugin init_state {plugin}: {e}')
+        plugin_path = button_settings.get("plugin")
+        if plugin_path:
+            plugin = get_plugin(self, serial_number, page, button)
+            plugin_result = call_plugin_func(plugin_path, 'init_state', plugin=plugin, deck_id=serial_number,
+                                             page=page, key=button, api=self)
+            set_plugin(self, serial_number, page, button, plugin_result)
 
         icon = button_settings.get("icon")
         if icon:
@@ -598,4 +612,3 @@ class StreamDeckServer:
         """
         button_settings = self._button_state(serial_number, page, button)
         self.update_button_filter_with_settings(button_settings, serial_number, page, button)
-

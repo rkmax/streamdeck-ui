@@ -4,7 +4,6 @@ import shlex
 import signal
 import sys
 import time
-import runpy
 from functools import partial
 from subprocess import Popen  # nosec - Need to allow users to specify arbitrary commands
 from typing import Dict, Optional
@@ -13,10 +12,12 @@ import pkg_resources
 from PySide6 import QtWidgets
 from PySide6.QtCore import QMimeData, QSignalBlocker, QSize, Qt, QTimer, QUrl
 from PySide6.QtGui import QAction, QDesktopServices, QDrag, QIcon
-from PySide6.QtWidgets import QApplication, QDialog, QFileDialog, QMainWindow, QMenu, QMessageBox, QSizePolicy, QSystemTrayIcon
+from PySide6.QtWidgets import QApplication, QDialog, QFileDialog, QMainWindow, QMenu, QMessageBox, QSizePolicy, \
+    QSystemTrayIcon
 
 from streamdeck_ui.api import StreamDeckServer
 from streamdeck_ui.config import FONTS_PATH, LOGO, STATE_FILE
+from streamdeck_ui.plugins.plugins import call_plugin_func, get_plugin
 from streamdeck_ui.semaphore import Semaphore, SemaphoreAcquireError
 from streamdeck_ui.ui_main import Ui_MainWindow
 from streamdeck_ui.ui_settings import Ui_SettingsDialog
@@ -69,7 +70,8 @@ selected_button: Optional[QtWidgets.QToolButton] = None
 text_update_timer: Optional[QTimer] = None
 "Timer used to delay updates to the button text"
 
-dimmer_options = {"Never": 0, "10 Seconds": 10, "1 Minute": 60, "5 Minutes": 300, "10 Minutes": 600, "15 Minutes": 900, "30 Minutes": 1800, "1 Hour": 3600, "5 Hours": 7200, "10 Hours": 36000}
+dimmer_options = {"Never": 0, "10 Seconds": 10, "1 Minute": 60, "5 Minutes": 300, "10 Minutes": 600, "15 Minutes": 900,
+                  "30 Minutes": 1800, "1 Hour": 3600, "5 Hours": 7200, "10 Hours": 36000}
 last_image_dir = ""
 
 
@@ -163,18 +165,11 @@ def handle_keypress(ui, deck_id: str, key: int, state: bool) -> None:
             kb = Controller()
         page = api.get_page(deck_id)
 
-        plugin = api.get_button_plugin(deck_id, page, key)
-        if plugin:
-            try:
-                result = runpy.run_path(plugin)
-                if 'handle_keypress' in result and callable(result['handle_keypress']):
-                    plugin_name = f'{deck_id}-{page}-{key}'
-                    plugin_state = api.plugins[plugin_name]
-                    result['handle_keypress'](ui=ui, deck_id=deck_id, page=page, key=key, api=api, plugin_state=plugin_state, plugin_name=plugin_name)
-                else:
-                    print(f"The plugin '{plugin}' does not have a handle_keypress function.")
-            except Exception as error:
-                print(f"The plugin '{plugin}' failed: {error}")
+        plugin_path = api.get_button_plugin(deck_id, page, key)
+        if plugin_path:
+            plugin = get_plugin(api, deck_id, page, key)
+            call_plugin_func(plugin_path, 'handle_keypress', plugin=plugin,
+                             deck_id=deck_id, page=page, key=key, api=api)
 
         command = api.get_button_command(deck_id, page, key)
         if command:
@@ -350,7 +345,8 @@ def select_image(window) -> None:
             image_file = os.path.expanduser("~")
         else:
             image_file = last_image_dir
-    file_name = QFileDialog.getOpenFileName(window, "Open Image", image_file, "Image Files (*.png *.jpg *.bmp *.svg *.gif)")[0]
+    file_name = \
+        QFileDialog.getOpenFileName(window, "Open Image", image_file, "Image Files (*.png *.jpg *.bmp *.svg *.gif)")[0]
     if file_name:
         last_image_dir = os.path.dirname(file_name)
         deck_id = _deck_id(window.ui)
@@ -567,7 +563,8 @@ def build_buttons(ui, tab) -> None:
 
 
 def export_config(window) -> None:
-    file_name = QFileDialog.getSaveFileName(window, "Export Config", os.path.expanduser("~/streamdeck_ui_export.json"), "JSON (*.json)")[0]
+    file_name = QFileDialog.getSaveFileName(window, "Export Config", os.path.expanduser("~/streamdeck_ui_export.json"),
+                                            "JSON (*.json)")[0]
     if not file_name:
         return
 
@@ -575,7 +572,8 @@ def export_config(window) -> None:
 
 
 def import_config(window) -> None:
-    file_name = QFileDialog.getOpenFileName(window, "Import Config", os.path.expanduser("~"), "Config Files (*.json)")[0]
+    file_name = QFileDialog.getOpenFileName(window, "Import Config", os.path.expanduser("~"), "Config Files (*.json)")[
+        0]
     if not file_name:
         return
 
