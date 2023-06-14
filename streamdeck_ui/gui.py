@@ -4,6 +4,7 @@ import shlex
 import signal
 import sys
 import time
+import runpy
 from functools import partial
 from subprocess import Popen  # nosec - Need to allow users to specify arbitrary commands
 from typing import Dict, Optional
@@ -161,6 +162,19 @@ def handle_keypress(ui, deck_id: str, key: int, state: bool) -> None:
         if pnput_supported:
             kb = Controller()
         page = api.get_page(deck_id)
+
+        plugin = api.get_button_plugin(deck_id, page, key)
+        if plugin:
+            try:
+                result = runpy.run_path(plugin)
+                if 'handle_keypress' in result and callable(result['handle_keypress']):
+                    plugin_name = f'{deck_id}-{page}-{key}'
+                    plugin_state = api.plugins[plugin_name]
+                    result['handle_keypress'](ui=ui, deck_id=deck_id, page=page, key=key, api=api, plugin_state=plugin_state, plugin_name=plugin_name)
+                else:
+                    print(f"The plugin '{plugin}' does not have a handle_keypress function.")
+            except Exception as error:
+                print(f"The plugin '{plugin}' failed: {error}")
 
         command = api.get_button_command(deck_id, page, key)
         if command:

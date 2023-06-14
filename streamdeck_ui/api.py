@@ -1,9 +1,10 @@
 """Defines the Python API for interacting with the StreamDeck Configuration UI"""
 import json
 import os
+import runpy
 import threading
 from functools import partial
-from typing import Dict, List, Optional, Tuple, Union, cast
+from typing import Dict, List, Optional, Tuple, Union, cast, Any
 
 from PIL.ImageQt import ImageQt
 from PySide6.QtCore import QObject, Signal
@@ -44,6 +45,8 @@ class StreamDeckServer:
 
         self.deck_ids: Dict[str, str] = {}
         "Lookup with device.id -> serial number"
+
+        self.plugins: Dict[str, Any] = {}
 
         self.state: Dict[str, Dict[str, Union[int, str, Dict[int, Dict[int, Dict[str, str]]]]]] = {}
         "The data structure holding configuration for all Stream Decks"
@@ -260,6 +263,9 @@ class StreamDeckServer:
         buttons_state = buttons.setdefault(page, {})  # type: ignore
         return buttons_state.setdefault(button, {})  # type: ignore
 
+    def get_button_state(self, deck_id: str, page: int, button: int) -> dict:
+        return self._button_state(deck_id, page, button)
+
     def swap_buttons(self, deck_id: str, page: int, source_button: int, target_button: int) -> None:
         """Swaps the properties of the source and target buttons"""
         temp = cast(dict, self.state[deck_id]["buttons"])[page][source_button]
@@ -406,6 +412,10 @@ class StreamDeckServer:
         """Returns the command set for the specified button"""
         return self._button_state(deck_id, page, button).get("command", "")
 
+    def get_button_plugin(self, deck_id: str, page: int, button: int) -> str:
+        """Returns the plugin set for the specified button"""
+        return self._button_state(deck_id, page, button).get("plugin", "")
+
     def set_button_switch_page(self, deck_id: str, page: int, button: int, switch_page: int) -> None:
         """Sets the page switch associated with the button"""
         if self.get_button_switch_page(deck_id, page, button) != switch_page:
@@ -537,21 +547,20 @@ class StreamDeckServer:
 
             display_handler.start()
 
-    def update_button_filters(self, serial_number: str, page: int, button: int):
-        """Sets the filters for a given button. Any previous filters are replaced.
-
-        :param serial_number: The StreamDeck serial number
-        :type serial_number: str
-        :param page: The page number
-        :type page: int
-        :param button: The button to update
-        :type button: int
-        :param size: The size of the image. This will be refactored out. defaults to (72, 72)
-        :type size: tuple, optional
-        """
+    def update_button_filter_with_settings(self, button_settings, serial_number: str, page: int, button: int):
         display_handler = self.display_handlers[serial_number]
-        button_settings = self._button_state(serial_number, page, button)
         filters: List[Filter] = []
+
+        plugin = button_settings.get("plugin")
+        if plugin:
+            plugin_name = f'{serial_number}-{page}-{button}'
+            if plugin_name not in self.plugins:
+                try:
+                    result = runpy.run_path(plugin)
+                    if 'init_state' in result and callable(result['init_state']):
+                        self.plugins[plugin_name] = result['init_state'](deck_id=serial_number, page=page, key=button, api=self)
+                except Exception as e:
+                    print(f'Error loading plugin init_state {plugin}: {e}')
 
         icon = button_settings.get("icon")
         if icon:
@@ -574,3 +583,19 @@ class StreamDeckServer:
             filters.append(TextFilter(text, font, font_size, vertical_align, horizontal_align))
 
         display_handler.replace(page, button, filters)
+
+    def update_button_filters(self, serial_number: str, page: int, button: int):
+        """Sets the filters for a given button. Any previous filters are replaced.
+
+        :param serial_number: The StreamDeck serial number
+        :type serial_number: str
+        :param page: The page number
+        :type page: int
+        :param button: The button to update
+        :type button: int
+        :param size: The size of the image. This will be refactored out. defaults to (72, 72)
+        :type size: tuple, optional
+        """
+        button_settings = self._button_state(serial_number, page, button)
+        self.update_button_filter_with_settings(button_settings, serial_number, page, button)
+
