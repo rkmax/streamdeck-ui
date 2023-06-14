@@ -1,8 +1,4 @@
-from threading import Thread, Event
 from time import sleep
-from datetime import datetime
-
-from PySide6.QtCore import Signal, QObject
 
 from streamdeck_ui.plugins.plugins import BasePlugin
 
@@ -15,11 +11,7 @@ class SimplePlugin(BasePlugin):
         pass
 
     def __init__(self, **kwargs):
-        self.api = kwargs.get("api", None)
-        self.plugin_name = kwargs.get("plugin_name", None)
-        self.page = kwargs.get("page", None)
-        self.deck_id = kwargs.get("deck_id", None)
-        self.key = kwargs.get("key", None)
+        super().__init__(**kwargs)
         self.states = [
             lucy,
             power
@@ -31,13 +23,6 @@ class SimplePlugin(BasePlugin):
             return 0
         else:
             return self.current_state + 1
-
-    def _update_state(self):
-        current_time = datetime.now().strftime('%H:%M')
-        print('current time: ', current_time)
-        button_state = self.api.get_button_state(self.deck_id, self.page, self.key)
-        button_state['label'] = current_time
-        self.api.update_button_filter_with_settings(button_state, self.deck_id, self.page, self.key)
 
     def handle_keypress(self, **kwargs):
         button_state = self.api.get_button_state(self.deck_id, self.page, self.key)
