@@ -15,4 +15,13 @@ class TickThread(Thread):
             self.stop_event.wait(self.tick_time)
 
     def stop(self):
+        if self.stop_event.is_set():
+            return
         self.stop_event.set()
+        try:
+            self.join()
+        except RuntimeError:
+            pass
+
+    def it_was_stopped(self):
+        return self.stop_event.is_set()

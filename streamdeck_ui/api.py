@@ -1,10 +1,9 @@
 """Defines the Python API for interacting with the StreamDeck Configuration UI"""
 import json
 import os
-import runpy
 import threading
 from functools import partial
-from typing import Dict, List, Optional, Tuple, Union, cast, Any
+from typing import Dict, List, Optional, Tuple, Union, cast
 
 from PIL.ImageQt import ImageQt
 from PySide6.QtCore import QObject, Signal
@@ -12,14 +11,14 @@ from PySide6.QtGui import QImage, QPixmap
 from StreamDeck.Devices import StreamDeck
 from StreamDeck.Transport.Transport import TransportError
 
-from streamdeck_ui.config import CONFIG_FILE_VERSION, DEFAULT_FONT, DEFAULT_FONT_SIZE, FONTS_PATH, STATE_FILE
+from streamdeck_ui.config import CONFIG_FILE_VERSION, DEFAULT_FONT_SIZE, STATE_FILE, get_font_path
 from streamdeck_ui.dimmer import Dimmer
 from streamdeck_ui.display.display_grid import DisplayGrid
 from streamdeck_ui.display.filter import Filter
 from streamdeck_ui.display.image_filter import ImageFilter
 from streamdeck_ui.display.pulse_filter import PulseFilter
 from streamdeck_ui.display.text_filter import TextFilter
-from streamdeck_ui.plugins.plugins import get_plugin, call_plugin_func, set_plugin, BasePlugin
+from streamdeck_ui.plugins.plugins import BasePlugin, stop_all_plugins, prepare_plugin
 from streamdeck_ui.stream_deck_monitor import StreamDeckMonitor
 
 
@@ -47,7 +46,7 @@ class StreamDeckServer:
         self.deck_ids: Dict[str, str] = {}
         "Lookup with device.id -> serial number"
 
-        self.plugins: Dict[str, Dict[int, Dict[int, BasePlugin]]] = {}
+        self.plugins: Dict[str, Dict[int, Dict[int, Union[BasePlugin, None]]]] = {}
 
         self.state: Dict[str, Dict[str, Union[int, str, Dict[int, Dict[int, Dict[str, str]]]]]] = {}
         "The data structure holding configuration for all Stream Decks"
@@ -203,16 +202,13 @@ class StreamDeckServer:
         )
         self.dimmers[serial_number].reset()
 
-        self.plugevents.attached.emit({"id": streamdeck_id, "serial_number": serial_number, "type": streamdeck.deck_type(), "layout": streamdeck.key_layout()})
+        self.plugevents.attached.emit(
+            {"id": streamdeck_id, "serial_number": serial_number, "type": streamdeck.deck_type(),
+             "layout": streamdeck.key_layout()})
 
     def initialize_state(self, serial_number: str, buttons: int):
         """Initializes the state for the given serial number. This allocates
         buttons and pages based on the layout.
-
-        :param serial_number: The Stream Deck serial number
-        :type serial_number: str
-        :param layout: The button layout for this Stream Deck
-        :type layout: Tuple[int, int]
         """
         for page in range(10):
             for button in range(buttons):
@@ -243,10 +239,7 @@ class StreamDeckServer:
             pass
 
         # loop all plugins and call stop
-        for page in self.plugins[serial_number]:
-            for button in self.plugins[serial_number][page]:
-                if self.plugins[serial_number][page][button] is not None:
-                    self.plugins[serial_number][page][button].stop()
+        stop_all_plugins(self, serial_number)
 
         del self.decks[serial_number]
         del self.deck_ids[id]
@@ -281,7 +274,7 @@ class StreamDeckServer:
         """Swaps the properties of the source and target buttons"""
         temp = cast(dict, self.state[deck_id]["buttons"])[page][source_button]
         cast(dict, self.state[deck_id]["buttons"])[page][source_button] = \
-        cast(dict, self.state[deck_id]["buttons"])[page][target_button]
+            cast(dict, self.state[deck_id]["buttons"])[page][target_button]
         cast(dict, self.state[deck_id]["buttons"])[page][target_button] = temp
         self._save_state()
 
@@ -299,6 +292,10 @@ class StreamDeckServer:
             self.update_button_filters(deck_id, page, button)
             display_handler = self.display_handlers[deck_id]
             display_handler.synchronize()
+
+    def sync_button_settings(self, deck_id: str, page: int, button: int, settings: dict) -> None:
+        self._button_state(deck_id, page, button)["text"] = settings.get("text", "")
+        self._button_state(deck_id, page, button)["icon"] = settings.get("icon", "")
 
     def get_button_text(self, deck_id: str, page: int, button: int) -> str:
         """Returns the text set for the specified button"""
@@ -565,17 +562,35 @@ class StreamDeckServer:
 
             display_handler.start()
 
+    def sync_update_button_filter_with_settings(self, button_settings, serial_number: str, page: int, button: int):
+        self.sync_button_settings(serial_number, page, button, button_settings)
+        self.update_button_filter_with_settings(button_settings, serial_number, page, button)
+
     def update_button_filter_with_settings(self, button_settings, serial_number: str, page: int, button: int):
+        if serial_number not in self.display_handlers:
+            return
         display_handler = self.display_handlers[serial_number]
         filters: List[Filter] = []
 
         plugin_path = button_settings.get("plugin")
         if plugin_path:
-            plugin = get_plugin(self, serial_number, page, button)
-            plugin_result = call_plugin_func(plugin_path, 'init_state', plugin=plugin, deck_id=serial_number,
-                                             page=page, key=button, api=self)
-            set_plugin(self, serial_number, page, button, plugin_result)
+            plugin_args = {
+                'api': self,
+                'deck_id': serial_number,
+                'page': page,
+                'key': button,
+            }
+            plugin = prepare_plugin(plugin_path, **plugin_args)
+            if plugin is not None:
+                filters.extend(plugin.get_filters())
 
+        if len(filters) == 0:
+            filters = self.default_button_filters(button_settings)
+
+        display_handler.replace(page, button, filters)
+
+    def default_button_filters(self, button_settings) -> List[Filter]:
+        filters: List[Filter] = []
         icon = button_settings.get("icon")
         if icon:
             # Now we have deck, page and buttons
@@ -585,18 +600,15 @@ class StreamDeckServer:
             filters.append(PulseFilter())
 
         text = button_settings.get("text")
-        font = button_settings.get("font", DEFAULT_FONT)
+        font = get_font_path(button_settings.get("font", None))
         font_size = button_settings.get("font_size", DEFAULT_FONT_SIZE)
-        if font == "":
-            font = DEFAULT_FONT
-        font = os.path.join(FONTS_PATH, font)
         vertical_align = button_settings.get("text_vertical_align", "")
         horizontal_align = button_settings.get("text_horizontal_align", "")
 
         if text:
             filters.append(TextFilter(text, font, font_size, vertical_align, horizontal_align))
 
-        display_handler.replace(page, button, filters)
+        return filters
 
     def update_button_filters(self, serial_number: str, page: int, button: int):
         """Sets the filters for a given button. Any previous filters are replaced.

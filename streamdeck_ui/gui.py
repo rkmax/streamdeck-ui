@@ -11,13 +11,13 @@ from typing import Dict, Optional
 import pkg_resources
 from PySide6 import QtWidgets
 from PySide6.QtCore import QMimeData, QSignalBlocker, QSize, Qt, QTimer, QUrl
-from PySide6.QtGui import QAction, QDesktopServices, QDrag, QIcon
+from PySide6.QtGui import QAction, QDesktopServices, QDrag, QIcon, QFontDatabase, QFont, QFontInfo
 from PySide6.QtWidgets import QApplication, QDialog, QFileDialog, QMainWindow, QMenu, QMessageBox, QSizePolicy, \
     QSystemTrayIcon
 
 from streamdeck_ui.api import StreamDeckServer
-from streamdeck_ui.config import FONTS_PATH, LOGO, STATE_FILE
-from streamdeck_ui.plugins.plugins import call_plugin_func, get_plugin
+from streamdeck_ui.config import FONTS_PATH, LOGO, STATE_FILE, DEFAULT_FONT
+from streamdeck_ui.plugins.plugins import prepare_plugin
 from streamdeck_ui.semaphore import Semaphore, SemaphoreAcquireError
 from streamdeck_ui.ui_main import Ui_MainWindow
 from streamdeck_ui.ui_settings import Ui_SettingsDialog
@@ -167,9 +167,15 @@ def handle_keypress(ui, deck_id: str, key: int, state: bool) -> None:
 
         plugin_path = api.get_button_plugin(deck_id, page, key)
         if plugin_path:
-            plugin = get_plugin(api, deck_id, page, key)
-            call_plugin_func(plugin_path, 'handle_keypress', plugin=plugin,
-                             deck_id=deck_id, page=page, key=key, api=api)
+            plugin_args = {
+                'api': api,
+                'deck_id': deck_id,
+                'page': page,
+                'key': key,
+            }
+            plugin = prepare_plugin(plugin_path, **plugin_args)
+            if plugin is not None:
+                plugin.handle_keypress(**plugin_args)
 
         command = api.get_button_command(deck_id, page, key)
         if command:
@@ -267,7 +273,6 @@ def _page(ui: Ui_MainWindow) -> int:
 
 def _button(_ui: Ui_MainWindow) -> int:
     index = selected_button.property('index')
-    print(f"Button index: {index}")
     return index
 
 
@@ -443,7 +448,11 @@ def button_clicked(ui, clicked_button, buttons) -> None:
         ui.command.setText(api.get_button_command(deck_id, _page(ui), button_id))
         ui.keys.setCurrentText(api.get_button_keys(deck_id, _page(ui), button_id))
         ui.write.setPlainText(api.get_button_write(deck_id, _page(ui), button_id))
-        ui.text_font.setCurrentText(api.get_button_font(deck_id, _page(ui), button_id))
+        text_font_index = ui.text_font.findData(api.get_button_font(deck_id, _page(ui), button_id))
+        if text_font_index != -1:
+            ui.text_font.setCurrentIndex(text_font_index)
+        else:
+            ui.text_font.setCurrentIndex(0)
         ui.text_font_size.setValue(api.get_button_font_size(deck_id, _page(ui), button_id))
         ui.change_brightness.setValue(api.get_button_change_brightness(deck_id, _page(ui), button_id))
         ui.switch_page.setValue(api.get_button_switch_page(deck_id, _page(ui), button_id))
@@ -479,7 +488,7 @@ def reset_button_configuration(ui):
     ui.text.clear()
     ui.command.clear()
     ui.keys.clearEditText()
-    ui.text_font.clearEditText()
+    ui.text_font.setCurrentIndex(0)
     ui.text_font_size.setValue(0)
     ui.write.clear()
     ui.change_brightness.setValue(0)
@@ -671,12 +680,13 @@ class MainWindow(QMainWindow):
         QtWidgets.QMessageBox.about(self, title, "\n".join(body))
 
 
-def update_button_text_font(ui, font: str) -> None:
+def update_button_text_font(ui, index: int) -> None:
     if not selected_button:
         return
     deck_id = _deck_id(ui)
     if deck_id is None:
         return
+    font = ui.text_font.itemData(index)
     api.set_button_font(deck_id, _page(ui), _button(ui), font)
     icon = api.get_button_icon_pixmap(deck_id, _page(ui), _button(ui))
     if icon:
@@ -822,14 +832,27 @@ def create_main_window(logo: QIcon, app: QApplication) -> MainWindow:
 
 def set_button_text_font_list(ui: Ui_MainWindow) -> None:
     """Prepares the font selection combo box with all available fonts"""
-    ui.text_font.currentTextChanged.connect(partial(update_button_text_font, ui))
+    ui.text_font.currentIndexChanged.connect(partial(update_button_text_font, ui))
     ui.text_font.clear()
     font_files = [f for f in os.listdir(os.path.join(FONTS_PATH)) if f.endswith(".ttf")]
 
-    ui.text_font.addItem("")
+    # default font
+    ui.text_font.addItem("", userData=os.path.join(FONTS_PATH, DEFAULT_FONT))
+
     for font_file in font_files:
-        # remove extension from font_file
-        ui.text_font.addItem(font_file)
+        font_full_path = os.path.join(FONTS_PATH, font_file)
+
+        font_family = get_font_label(font_full_path)
+        ui.text_font.addItem(font_family, userData=font_full_path)
+
+
+def get_font_label(font_path: str | bytes) -> str:
+    font_id = QFontDatabase.addApplicationFont(font_path)
+    font_families = QFontDatabase.applicationFontFamilies(font_id)
+    font_styles = QFontDatabase.styles(font_families[0])
+    # font_style last item in font_styles
+    font_style = font_styles[-1]
+    return f"{font_families[0]} {font_style}"
 
 
 def create_tray(logo: QIcon, app: QApplication, main_window: MainWindow) -> QSystemTrayIcon:
@@ -904,6 +927,7 @@ def sigterm_handler(api, app, signal_value, frame):
         sys.exit()
     else:
         # Terminations for other reasons are treated as an error condition
+        print('Exiting due to signal', signal_value)
         sys.exit(1)
 
 

@@ -7,8 +7,6 @@ power = "/home/rkmax/ElGato/Faces/power_face.gif"
 
 
 class SimplePlugin(BasePlugin):
-    def stop(self):
-        pass
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -25,23 +23,13 @@ class SimplePlugin(BasePlugin):
             return self.current_state + 1
 
     def handle_keypress(self, **kwargs):
-        button_state = self.api.get_button_state(self.deck_id, self.page, self.key)
+        button_state = self.get_button_state()
         next_state = self._next_state()
         button_state['icon'] = self.states[next_state]
         self.current_state = next_state
         sleep(0.04)
-        self.api.update_button_filter_with_settings(button_state, self.deck_id, self.page, self.key)
+        self.synchronize(button_state)
 
 
-def init_state(**kwargs):
-    plugin = kwargs.get('plugin', None)
-    if plugin is not None:
-        return plugin
-
+def initialize_plugin(**kwargs) -> SimplePlugin:
     return SimplePlugin(**kwargs)
-
-
-def handle_keypress(**kwargs):
-    plugin = kwargs.get('plugin', None)
-    if plugin is not None:
-        plugin.handle_keypress(**kwargs)
