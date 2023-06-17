@@ -59,12 +59,9 @@ class CPUPlugin(BasePlugin):
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        self.thread = TickThread(1, self._update_state)
+        self.thread = TickThread(1, self.update)
         self.filters: List[Filter] = []
         self.current_state = 0
-        self.cpu_text: str = '0%'
-        self.mem_text: str = '0%'
-        self.icon = CPU_ICON
         self.thread.start()
 
     def stop(self):
@@ -73,9 +70,9 @@ class CPUPlugin(BasePlugin):
 
     def handle_keypress(self, **kwargs):
         self.current_state = _next_state(self.current_state)
-        self._update_state()
+        self.update()
 
-    def _update_state(self):
+    def update(self):
         with self.lock:
             button_state = self.get_button_state()
             text = STATES_INFO[STATES[self.current_state]]()
