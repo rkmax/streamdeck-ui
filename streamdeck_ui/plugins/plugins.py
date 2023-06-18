@@ -42,6 +42,7 @@ class BasePlugin(ABC):
         self.page = kwargs.get("page", None)
         self.deck_id = kwargs.get("deck_id", None)
         self.key = kwargs.get("key", None)
+        self.filters: List[Filter] = []
 
     def stop(self, **kwargs):
         self.lock.acquire()
@@ -50,6 +51,9 @@ class BasePlugin(ABC):
     def get_button_state(self):
         return self.api.get_button_state(self.deck_id, self.page, self.key)
 
+    def get_plugin_config(self):
+        return self.api.get_button_plugin_config(self.deck_id, self.page, self.key)
+
     def synchronize(self, button_state):
         self.api.sync_update_button_filter_with_settings(button_state, self.deck_id, self.page, self.key)
 
@@ -57,4 +61,4 @@ class BasePlugin(ABC):
         pass
 
     def get_filters(self, **kwargs) -> List[Filter]:
-        return []
+        return self.filters

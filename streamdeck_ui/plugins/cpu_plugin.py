@@ -1,3 +1,4 @@
+import os
 import re
 import subprocess
 from typing import List
@@ -8,10 +9,9 @@ from streamdeck_ui.display.filter import Filter
 from streamdeck_ui.plugins.plugins import BasePlugin
 from streamdeck_ui.plugins.utils import TickThread
 
-CPU_ICON = "/home/rkmax/ElGato/Computer Parts/cpu.png"
-MEM_ICON = "/home/rkmax/ElGato/Computer Parts/mem.png"
-GPU_ICON = "/home/rkmax/ElGato/Computer Parts/gpu.png"
-
+CPU_ICON = os.path.join(os.path.dirname(__file__), 'cpu_plugin', 'cpu.png')
+MEM_ICON = os.path.join(os.path.dirname(__file__), 'cpu_plugin', 'mem.png')
+GPU_ICON = os.path.join(os.path.dirname(__file__), 'cpu_plugin', 'gpu.png')
 STATES = ['cpu', 'mem', 'gpu']
 STATES_ICONS = {
     'cpu': CPU_ICON,

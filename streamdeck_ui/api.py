@@ -425,6 +425,10 @@ class StreamDeckServer:
         """Returns the plugin set for the specified button"""
         return self._button_state(deck_id, page, button).get("plugin", "")
 
+    def get_button_plugin_config(self, deck_id: str, page: int, button: int) -> str:
+        """Returns the plugin config set for the specified button"""
+        return self._button_state(deck_id, page, button).get("plugin_config", "")
+
     def set_button_switch_page(self, deck_id: str, page: int, button: int, switch_page: int) -> None:
         """Sets the page switch associated with the button"""
         if self.get_button_switch_page(deck_id, page, button) != switch_page:
