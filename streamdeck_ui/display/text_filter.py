@@ -34,19 +34,24 @@ class TextFilter(Filter):
         # Hashcode should be created for anything that makes this frame unique
         self.hashcode = hash((self.__class__, text, font, font_size, vertical_align, horizontal_align))
 
+    def calculate_multi_line_width(self, backdrop_draw: ImageDraw.Draw) -> int:
+        lines = self.text.split("\n")
+        line_widths = [backdrop_draw.textlength(line, font=self.true_font) for line in lines]
+        return max(line_widths)
+
     def initialize(self, size: Tuple[int, int]):
         self.image = Image.new("RGBA", size)
         backdrop_draw = ImageDraw.Draw(self.image)
 
         # Calculate the height and width of the text we're drawing, using the font itself
-        label_w, _ = backdrop_draw.textsize(self.text, font=self.true_font)
+        label_w = self.calculate_multi_line_width(backdrop_draw)
 
         # Calculate dimensions for text that include ascender (above the line)
         # and below the line  (descender) characters. This is used to adjust the
         # font placement and should allow for button text to horizontally align
         # across buttons. Basically we want to figure out what is the tallest
         # text we will need to draw.
-        _, label_h = backdrop_draw.textsize("lLpgyL|", font=self.true_font)
+        _, _, _, label_h = backdrop_draw.textbbox((0, 0), "lLpgyL|", font=self.true_font)
 
         gap = (size[1] - 5 * label_h) // 4
 
@@ -78,7 +83,8 @@ class TextFilter(Filter):
         foreground_draw = ImageDraw.Draw(self.image)
         foreground_draw.text(label_pos, text=self.text, font=self.true_font, fill="white")
 
-    def transform(self, get_input: Callable[[], Image.Image], get_output: Callable[[int], Image.Image], input_changed: bool, time: Fraction) -> Tuple[Image.Image, int]:
+    def transform(self, get_input: Callable[[], Image.Image], get_output: Callable[[int], Image.Image],
+                  input_changed: bool, time: Fraction) -> Tuple[Image.Image, int]:
         """
         The transformation returns the loaded image, ando overwrites whatever came before.
         """
