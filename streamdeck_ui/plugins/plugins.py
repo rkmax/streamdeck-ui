@@ -34,7 +34,6 @@ def stop_all_plugins(api, deck_id):
 
 
 class BasePlugin(ABC):
-
     lock: threading.Lock = threading.Lock()
 
     def __init__(self, **kwargs):
@@ -43,6 +42,7 @@ class BasePlugin(ABC):
         self.deck_id = kwargs.get("deck_id", None)
         self.key = kwargs.get("key", None)
         self.filters: List[Filter] = []
+        self.actions = []
 
     def stop(self, **kwargs):
         self.lock.acquire()
@@ -62,3 +62,6 @@ class BasePlugin(ABC):
 
     def get_filters(self, **kwargs) -> List[Filter]:
         return self.filters
+
+    def get_actions(self, **kwargs):
+        return self.actions
