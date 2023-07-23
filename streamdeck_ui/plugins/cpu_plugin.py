@@ -59,14 +59,24 @@ class CPUPlugin(BasePlugin):
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        self.thread = TickThread(1, self.update)
+        self.thread = TickThread(1, self._update_texts)
         self.filters: List[Filter] = []
+        self.texts = {
+            'cpu': '',
+            'mem': '',
+            'gpu': ''
+        }
         self.current_state = 0
         self.thread.start()
 
     def stop(self):
         self.thread.stop()
         super().stop()
+
+    def _update_texts(self):
+        for state in STATES:
+            self.texts[state] = STATES_INFO[state]()
+        self.update()
 
     def handle_keypress(self, **kwargs):
         self.current_state = _next_state(self.current_state)
@@ -75,12 +85,8 @@ class CPUPlugin(BasePlugin):
     def update(self):
         with self.lock:
             button_state = self.get_button_state()
-            text = STATES_INFO[STATES[self.current_state]]()
+            text = self.texts[STATES[self.current_state]]
             icon = STATES_ICONS[STATES[self.current_state]]
-
-            if text == button_state['text'] and icon == button_state['icon']:
-                return
-
             button_state['text'] = text
             button_state['icon'] = icon
             self.synchronize(button_state)
